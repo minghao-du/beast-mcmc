@@ -38,17 +38,73 @@ import dr.xml.Reportable;
 import java.util.logging.Logger;
 
 /**
+ * Defines the contract for a component that provides the gradient (first derivative) of a
+ * log-probability density function with respect to a specific model parameter.
+ * <p>
+ * <b>Core Purpose:</b>
+ * This interface acts as a mathematical adapter. It bridges the gap between:
+ * <ul>
+ * <li><b>The Inference Engine:</b> Algorithms like Hamiltonian Monte Carlo (HMC) that operate in a
+ * abstract vector space and require gradient information (<b>&nabla; log P(&theta;)</b>) to propose new states.</li>
+ * <li><b>The Statistical Model:</b> The complex hierarchy of BEAST Likelihoods and Parameters.</li>
+ * </ul>
+ * <p>
+ * <b>Key Responsibilities:</b>
+ * <ul>
+ * <li>Expose the target {@link Likelihood} function (the "Potential Energy").</li>
+ * <li>Expose the specific {@link Parameter} (the "Position") being sampled.</li>
+ * <li>Compute the gradient vector efficiently.</li>
+ * </ul>
+ * <p>
+ * <b>Validation Mechanism:</b>
+ * This interface includes static utilities (e.g., {@link #getReportAndCheckForError}) to perform
+ * "Gradient Checking". This compares the analytic gradient returned by implementation classes against
+ * a numerical gradient calculated via finite differences, ensuring mathematical correctness before
+ * long MCMC runs begin.
+ *
  * @author Max Tolkoff
  * @author Marc A. Suchard
  */
 public interface GradientWrtParameterProvider {
 
+    /**
+     * Returns the likelihood object representing the log-probability density function.
+     * <p>
+     * In HMC terms, the negative log-likelihood corresponds to the Potential Energy (<i>U</i>).
+     *
+     * @return The target likelihood function.
+     */
     Likelihood getLikelihood();
 
+    /**
+     * Returns the model parameter with respect to which the gradient is calculated.
+     * <p>
+     * This parameter represents the variable vector <b>&theta;</b> in the derivative
+     * <b>&part; log P / &part; &theta;</b>.
+     *
+     * @return The target parameter.
+     */
     Parameter getParameter();
 
+    /**
+     * Returns the dimension of the parameter and the resulting gradient vector.
+     * <p>
+     * This must be equal to {@code getParameter().getDimension()}.
+     *
+     * @return The size of the gradient vector.
+     */
     int getDimension();
 
+    /**
+     * Computes the vector of first partial derivatives of the log-probability density.
+     * <p>
+     * The result is the gradient vector:
+     * <pre>
+     * &nabla; log P(&theta;) = [ &part; log P / &part; &theta;<sub>1</sub>, ..., &part; log P / &part; &theta;<sub>n</sub> ]<sup>T</sup>
+     * </pre>
+     *
+     * @return A double array containing the gradient values. The length must match {@link #getDimension()}.
+     */
     double[] getGradientLogDensity();
 
     class Negative implements GradientWrtParameterProvider {
