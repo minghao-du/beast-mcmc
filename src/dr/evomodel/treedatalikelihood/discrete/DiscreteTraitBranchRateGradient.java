@@ -56,8 +56,44 @@ import static dr.math.MachineAccuracy.SQRT_EPSILON;
 
 
 /**
+ * Computes the gradient (first derivative) and diagonal Hessian (second derivative) of the log-likelihood
+ * with respect to <b>branch rate parameters</b> for discrete trait models.
+ * <p>
+ * <b>Mathematical Foundation:</b>
+ * <br>
+ * In phylogenetic models, the evolutionary distance (<i>D</i>) along a branch is typically the product
+ * of the branch rate (<i>r</i>) and the time duration or branch length (<i>t</i>):
+ * <pre>
+ * D = r * t
+ * </pre>
+ * To sample rates using Hamiltonian Monte Carlo (HMC), we need the gradient of the log-likelihood (<i>L</i>)
+ * with respect to the rate <i>r</i>. This class applies the <b>Chain Rule</b>:
+ * <pre>
+ * &part;L / &part;r  =  (&part;L / &part;D) * (&part;D / &part;r)
+ * </pre>
+ * Where:
+ * <ul>
+ * <li><b>&part;L / &part;D</b>: Is the gradient with respect to evolutionary distance. This is computed efficiently
+ * (in linear time O(N)) by the underlying {@link DiscreteTraitBranchRateDelegate} using BEAGLE or native implementations.</li>
+ * <li><b>&part;D / &part;r</b>: Is the partial derivative of distance wrt rate. Since <i>D = rt</i>, this equals
+ * the branch length <i>t</i> (see {@link #getChainGradient}).</li>
+ * </ul>
+ * <p>
+ * <b>Key Responsibilities:</b>
+ * <ul>
+ * <li><b>Bridge:</b> Connects the {@link TreeDataLikelihood} (data) and {@link DifferentiableBranchRates} (model)
+ * to the HMC engine via the {@link GradientWrtParameterProvider} interface.</li>
+ * <li><b>Validation:</b> Implements {@link Reportable} to trigger automatic numerical verification.
+ * It compares the analytical gradient computed here against a finite-difference approximation to ensure accuracy
+ *.</li>
+ * <li><b>Performance:</b> Supports linear-time gradient calculation, making it scalable for large trees
+ * (Ji et al., 2020).</li>
+ * </ul>
+ *
  * @author Xiang Ji
  * @author Marc A. Suchard
+ * @see DiscreteTraitBranchRateDelegate
+ * @see GradientWrtParameterProvider
  */
 public class DiscreteTraitBranchRateGradient
         implements GradientWrtParameterProvider, HessianWrtParameterProvider, Reportable, Loggable, Citable {
@@ -69,6 +105,20 @@ public class DiscreteTraitBranchRateGradient
     protected final Parameter rateParameter;
     protected final DifferentiableBranchRates branchRateModel;
 
+    /**
+     * Constructs a gradient provider for discrete trait branch rates.
+     * <p>
+     * Initializes the necessary delegates. If a specific gradient delegate does not yet exist
+     * for the given trait, it instantiates a new {@link DiscreteTraitBranchRateDelegate} and
+     * registers it with the likelihood system.
+     *
+     * @param traitName          The name of the discrete trait (e.g., "location").
+     * @param treeDataLikelihood The likelihood function for the tree and data.
+     * @param likelihoodDelegate The delegate handling the low-level calculations (e.g., BEAGLE).
+     * @param rateParameter      The specific rate parameter vector being sampled.
+     * @param useHessian         True if second-order derivatives (Hessian) are required.
+     * @throws RuntimeException if the model involves more than 1 trait (not yet implemented).
+     */
     // TODO Refactor / remove code duplication with BranchRateGradient
     // TODO Maybe use:  AbstractBranchRateGradient, DiscreteTraitBranchRateGradient, ContinuousTraitBranchRateGradient
     public DiscreteTraitBranchRateGradient(String traitName,
@@ -131,6 +181,18 @@ public class DiscreteTraitBranchRateGradient
         return getParameter().getDimension();
     }
 
+    /**
+     * Computes the diagonal elements of the Hessian matrix (second partial derivatives).
+     * <p>
+     * Uses the second-order chain rule:
+     * <pre>
+     * &part;<sup>2</sup>L / &part;r<sup>2</sup> = (&part;<sup>2</sup>L / &part;D<sup>2</sup>) * (&part;D / &part;r)<sup>2</sup> + (&part;L / &part;D) * (&part;<sup>2</sup>D / &part;r<sup>2</sup>)
+     * </pre>
+     * Since <i>D = r * t</i> is linear with respect to <i>r</i>, the second term vanishes
+     * (&part;<sup>2</sup>D / &part;r<sup>2</sup> = 0).
+     *
+     * @return A vector containing the diagonal second derivatives.
+     */
     public double[] getDiagonalHessianLogDensity() {
 
         double[] result = new double[tree.getNodeCount() - 1];
@@ -161,6 +223,18 @@ public class DiscreteTraitBranchRateGradient
         throw new RuntimeException("Not yet implemented");
     }
 
+    /**
+     * Computes the gradient of the log-likelihood with respect to the branch rate parameter.
+     * <p>
+     * <b>Algorithm:</b>
+     * <ol>
+     * <li>Retrieves the raw gradient wrt distance (&part;L/&part;D) from the {@link #treeTraitProvider}.</li>
+     * <li>Iterates over all nodes in the tree.</li>
+     * <li>For each branch, multiplies the raw gradient by the branch length (chain rule application).</li>
+     * <li>Maps the result to the correct index in the parameter vector.</li>
+     * </ol>
+     * @return A vector containing &part;L/&part;r for each branch rate.
+     */
     public double[] getGradientLogDensity() {
 
         long startTime;
@@ -203,6 +277,16 @@ public class DiscreteTraitBranchRateGradient
     }
 
 
+    /**
+     * Helper method to compute the partial derivative of the transformation function (Distance wrt Rate).
+     * <p>
+     * Since {@code Distance = rate * branchLength}, the derivative {@code d(Distance)/d(rate)}
+     * is simply the {@code branchLength}.
+     *
+     * @param tree The phylogenetic tree.
+     * @param node The node defining the branch of interest.
+     * @return The branch length (representing &part;D/&part;r).
+     */
     protected double getChainGradient(Tree tree, NodeRef node) {
         return tree.getBranchLength(node);
     }
